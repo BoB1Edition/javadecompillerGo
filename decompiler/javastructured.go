@@ -245,7 +245,27 @@ func (this *CONSTANT_Methodref_info) NameAndTypeIndex() uint16 {
 
 type CONSTANT_Fieldref_info CONSTANT_Methodref_info
 
+func (this *CONSTANT_Fieldref_info) ClassIndex() uint16 {
+	tmp := this.info[:2]
+	return binary.BigEndian.Uint16(tmp)
+}
+
+func (this *CONSTANT_Fieldref_info) NameAndTypeIndex() uint16 {
+	tmp := this.info[2:]
+	return binary.BigEndian.Uint16(tmp)
+}
+
 type CONSTANT_InterfaceMethodref_info CONSTANT_Methodref_info
+
+func (this *CONSTANT_InterfaceMethodref_info) ClassIndex() uint16 {
+	tmp := this.info[:2]
+	return binary.BigEndian.Uint16(tmp)
+}
+
+func (this *CONSTANT_InterfaceMethodref_info) NameAndTypeIndex() uint16 {
+	tmp := this.info[2:]
+	return binary.BigEndian.Uint16(tmp)
+}
 
 type CONSTANT_String_info struct {
 	CpInfo
@@ -335,7 +355,7 @@ func typeFromSignature(signature string) (string, string) {
 	case 'Z':
 		return "boolean ", ""
 	case 'V':
-		return "boolean ", ""
+		return "void ", ""
 	case 'L':
 		CLASSL := regexp.MustCompile(`(?m)L(.*\/)*(?P<classname>.*);`)
 		if CLASSL.MatchString(signature) {
@@ -605,7 +625,7 @@ func (this *MethodInfo) GetCode(cps []CpInfo) string {
 		switch val {
 		case "Code":
 			ca := attr.ToCodeAttribute()
-			text += opcodeTostring(ca.code)
+			text += opcodeTostring(ca.code, cps)
 			log.Printf("name: %s Code: %#v", name, ca.code)
 		}
 	}
@@ -613,7 +633,7 @@ func (this *MethodInfo) GetCode(cps []CpInfo) string {
 	return text
 }
 
-func opcodeTostring(opcode []byte) string {
+func opcodeTostring(opcode []byte, cps []CpInfo) string {
 	str := ""
 	for i := 0; i < len(opcode); i++ {
 		str += "\t"
@@ -653,10 +673,32 @@ func opcodeTostring(opcode []byte) string {
 		case 0x10:
 			str += fmt.Sprintf("// bipush %#x\n", opcode[i+1])
 			i += 1
+		case 0x11:
+			str += fmt.Sprintf("// sipush %#x %#x\n", opcode[i+1], opcode[i+2])
+			i += 2
+		case 0x12:
+			str += fmt.Sprintf("// ldc %#x\n", opcode[i+1])
+			i += 1
+		case 0x13:
+			str += fmt.Sprintf("// ldc_w %#x %#x\n", opcode[i+1], opcode[i+2])
+			i += 2
+		case 0x14:
+			str += fmt.Sprintf("// ldc2_w %#x %#x\n", opcode[i+1], opcode[i+2])
+			i += 2
+		case 0x15:
+			str += fmt.Sprintf("// iload %#x\n", opcode[i+1])
+			i += 1
+		case 0x16:
+			str += fmt.Sprintf("// lload %#x\n", opcode[i+1])
+			i += 1
+		case 0x1b:
+			str += "// iload_1 \n"
 		case 0x20:
 			str += "// lload_2\n"
 		case 0x2a:
-			str += "// aload_0\n"
+			str += "// aload_0  | this.\n"
+		case 0x2b:
+			str += "// aload_1\n"
 		case 0x9f:
 			str += fmt.Sprintf("// if_icmpeq %#x %#x\n", opcode[i+1], opcode[i+2])
 			i += 2
@@ -667,9 +709,45 @@ func opcodeTostring(opcode []byte) string {
 			str += "// ireturn\n"
 		case 0xb4:
 			str += fmt.Sprintf("// getfield %#x %#x\n", opcode[i+1], opcode[i+2])
+
+			refaddress := uint16(uint16(opcode[i+1])<<8 | uint16(opcode[i+2]))
+			ref := cps[refaddress-1]
+			fdef := CONSTANT_Fieldref_info{
+				CpInfo: ref,
+			}
+
+			classindex := cps[fdef.ClassIndex()-1]
+			switch classindex.tag {
+			case CONSTANT_Class:
+				cinfo := CONSTANT_Class_info{
+					CpInfo: classindex,
+				}
+				cname := CONSTANT_Utf8_info{
+					CpInfo: cps[cinfo.NameIndex()-1],
+				}
+				log.Print(cname.Values())
+			}
+			//			fmt.Printf("classindex: %v\n", classindex)
+			//fdef.ClassIndex()-1
+			NT1 := CONSTANT_NameAndType_info{
+				CpInfo: cps[fdef.NameAndTypeIndex()-1],
+			}
+			Name1 := CONSTANT_Utf8_info{
+				CpInfo: cps[NT1.NameIndex()-1],
+			}
+
+			log.Print(Name1.Values())
+			i += 2
+			n, _ := Name1.Values()
+			str += "//" + n
+		case 0xb5:
+			str += fmt.Sprintf("// putfield %#x %#x\n", opcode[i+1], opcode[i+2])
+			i += 2
+		case 0xb6:
+			str += fmt.Sprintf("// invokevirtual %#x %#x\n", opcode[i+1], opcode[i+2])
 			i += 2
 		default:
-			log.Printf("TODO opcode %#x %d", opcode[i], opcode[i])
+			fmt.Printf("TODO opcode %#x %d\n", opcode[i], opcode[i])
 		}
 	}
 	return str
